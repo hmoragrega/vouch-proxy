@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 
 	"github.com/vouch/vouch-proxy/pkg/cfg"
 	"github.com/vouch/vouch-proxy/pkg/cookie"
@@ -71,7 +72,7 @@ func CallbackHandler(w http.ResponseWriter, r *http.Request) {
 	// log.Debugf("/auth %+v", user)
 
 	// verify / authz the user
-	if ok, err := verifyRequest(user, r); !ok {
+	if ok, err := verifyRequest(user, session.Values["requestedURL"].(string)); !ok {
 		responses.Error403(w, r, fmt.Errorf("/auth User is not authorized: %w . Please try again or seek support from your administrator", err))
 		return
 	}
@@ -101,7 +102,7 @@ func CallbackHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // verifyRequest validates that the domains match for the user
-func verifyRequest(u interface{}, r *http.Request) (bool, error) {
+func verifyRequest(u interface{}, requestedURL string) (bool, error) {
 
 	user := u.(structs.User)
 
@@ -114,6 +115,11 @@ func verifyRequest(u interface{}, r *http.Request) (bool, error) {
 
 	// AllowRules
 	case len(cfg.Cfg.AllowRules) != 0:
+		parsedURL, err := url.Parse(requestedURL)
+		if err != nil {
+			log.Warnf("verifyRequest: cannot parse requested URL")
+			parsedURL = &url.URL{}
+		}
 		for _, ruleset := range cfg.Cfg.AllowRules {
 			allow := true
 		ruleset:
@@ -130,7 +136,7 @@ func verifyRequest(u interface{}, r *http.Request) (bool, error) {
 					break ruleset
 				case "host":
 					for _, host := range rule.Values {
-						if host == r.Host {
+						if host == parsedURL.Host {
 							break rule
 						}
 					}
@@ -146,7 +152,7 @@ func verifyRequest(u interface{}, r *http.Request) (bool, error) {
 					break ruleset
 				case "host:rx":
 					for _, host := range rule.ValuesRx {
-						if host.Match([]byte(r.Host)) {
+						if host.Match([]byte(parsedURL.Host)) {
 							break rule
 						}
 					}
