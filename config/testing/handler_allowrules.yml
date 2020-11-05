@@ -1,0 +1,40 @@
+vouch:
+  logLevel: debug
+  domains:
+    - example.com
+    - another.org
+
+  whiteList:
+    - test@example.com
+
+  allowRules:
+      # name of the ruleset, it will be logged if macthes
+    - name: admins 
+      # list of rules, every rule accepts an arbitrary number of values to match (think of an OR)
+      rules:      
+          # type of the rule. One of: username, username:rx, host, host:rx 
+          #  - username:    list of allowed usernames (exact match).
+          #  - username:rx: list of regex to match against the username.
+          #  - host:        list of allowed hosts (exact match).
+          #  - host:rx:     list of regex to match against the host.
+        - type: username  
+          values:
+            - admin@example.com
+            - admin@another.org
+    - name: media-server
+      rules:
+        - type: "username:rx"
+          values:
+            - ^.*@example\.com$ # any user with an email from the domain.
+        - type: "host:rx"
+          values:
+            - ^(videos|photos)-[0-9]{2}\.example\.com$ # video-01.example.com, video-12.example.com.
+
+  jwt:
+    secret: testingsecret
+
+oauth:
+  provider: indieauth
+  client_id: http://vouch.github.io
+  auth_url: https://indielogin.com/auth
+  callback_url: http://vouch.github.io:9090/auth

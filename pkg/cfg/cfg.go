@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 
 	"github.com/kelseyhightower/envconfig"
@@ -35,14 +36,23 @@ import (
 // as well as a `envconfig` tag used by https://github.com/kelseyhightower/envconfig
 // though most of the time envconfig will use the struct key's name: VOUCH_PORT VOUCH_JWT_MAXAGE
 type Config struct {
-	LogLevel      string   `mapstructure:"logLevel"`
-	Listen        string   `mapstructure:"listen"`
-	Port          int      `mapstructure:"port"`
-	Domains       []string `mapstructure:"domains"`
-	WhiteList     []string `mapstructure:"whitelist"`
-	TeamWhiteList []string `mapstructure:"teamWhitelist"`
-	AllowAllUsers bool     `mapstructure:"allowAllUsers"`
-	PublicAccess  bool     `mapstructure:"publicAccess"`
+	LogLevel      string                         `mapstructure:"logLevel"`
+	Listen        string                         `mapstructure:"listen"`
+	Port          int                            `mapstructure:"port"`
+	Domains       []string                       `mapstructure:"domains"`
+	WhiteList     []string                       `mapstructure:"whitelist"`
+	TeamWhiteList []string                       `mapstructure:"teamWhitelist"`
+	DMZ           map[string]map[string][]string `mapstructure:"dmz"`
+	AllowRules    []struct {
+		Name  string `mapstructure:"name"`
+		Rules []struct {
+			Type     string           `mapstructure:"type"`
+			Values   []string         `mapstructure:"values"`
+			ValuesRx []*regexp.Regexp `mapstructure:"-"`
+		} `mapstructure:"rules"`
+	} `mapstructure:"allowRules"`
+	AllowAllUsers bool `mapstructure:"allowAllUsers"`
+	PublicAccess  bool `mapstructure:"publicAccess"`
 	JWT           struct {
 		MaxAge   int    `mapstructure:"maxAge"` // in minutes
 		Issuer   string `mapstructure:"issuer"`
@@ -270,7 +280,6 @@ func parseConfigFile() error {
 	if err != nil {             // Handle errors reading the config file
 		return fmt.Errorf("%w: %s", errConfigNotFound, err)
 	}
-
 	if err = checkConfigFileWellFormed(); err != nil {
 		log.Error("configuration error: config file should have only two top level elements: `vouch` and `oauth`.  These and other syntax errors follow...")
 		log.Error(err)
@@ -322,6 +331,9 @@ func fixConfigOptions() {
 		Cfg.TestURLs = append(Cfg.TestURLs, Cfg.TestURL)
 	}
 
+	if err := validateAllowRules(); err != nil {
+		log.Fatal(err)
+	}
 }
 
 // use viper and mapstructure check to see if
@@ -470,6 +482,32 @@ func cleanClaimsHeaders() error {
 		cleanedHeaders[claim] = header
 	}
 	Cfg.Headers.ClaimsCleaned = cleanedHeaders
+	return nil
+}
+
+func validateAllowRules() error {
+	for i, ruleset := range Cfg.AllowRules {
+		for j, rule := range ruleset.Rules {
+			if len(rule.Values) == 0 {
+				return fmt.Errorf("empty allow rule: %s [%s]", ruleset.Name, rule.Type)
+			}
+			switch rule.Type {
+			case "username:rx", "host:rx":
+				Cfg.AllowRules[i].Rules[j].ValuesRx = make([]*regexp.Regexp, len(rule.Values))
+				for x, raw := range rule.Values {
+					rx, err := regexp.Compile(raw)
+					if err != nil {
+						return fmt.Errorf("invalid rule regex %s [%s] %s: %v", ruleset.Name, rule.Type, raw, err)
+					}
+					Cfg.AllowRules[i].Rules[j].ValuesRx[x] = rx
+				}
+			case "username", "host":
+				// do nothing
+			default:
+				return fmt.Errorf("invalid rule type. Must be one of: username, username:rx, host, host:rx, got %s", rule.Type)
+			}
+		}
+	}
 	return nil
 }
 

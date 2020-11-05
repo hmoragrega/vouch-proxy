@@ -12,6 +12,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
@@ -47,7 +48,7 @@ func setUp(configFile string) {
 func TestVerifyUserPositiveUserInWhiteList(t *testing.T) {
 	setUp("/config/testing/handler_whitelist.yml")
 	user := &structs.User{Username: "test@example.com", Email: "test@example.com", Name: "Test Name"}
-	ok, err := verifyUser(*user)
+	ok, err := verifyRequest(*user, &http.Request{})
 	assert.True(t, ok)
 	assert.Nil(t, err)
 }
@@ -57,7 +58,7 @@ func TestVerifyUserPositiveAllowAllUsers(t *testing.T) {
 
 	user := &structs.User{Username: "testuser", Email: "test@example.com", Name: "Test Name"}
 
-	ok, err := verifyUser(*user)
+	ok, err := verifyRequest(*user, &http.Request{})
 	assert.True(t, ok)
 	assert.Nil(t, err)
 }
@@ -65,7 +66,7 @@ func TestVerifyUserPositiveAllowAllUsers(t *testing.T) {
 func TestVerifyUserPositiveByEmail(t *testing.T) {
 	setUp("/config/testing/handler_email.yml")
 	user := &structs.User{Username: "testuser", Email: "test@example.com", Name: "Test Name"}
-	ok, err := verifyUser(*user)
+	ok, err := verifyRequest(*user, &http.Request{})
 	assert.True(t, ok)
 	assert.Nil(t, err)
 }
@@ -77,7 +78,7 @@ func TestVerifyUserPositiveByTeam(t *testing.T) {
 	user := &structs.User{Username: "testuser", Email: "test@example.com", Name: "Test Name"}
 	user.TeamMemberships = append(user.TeamMemberships, "org1/team3")
 	user.TeamMemberships = append(user.TeamMemberships, "org1/team1")
-	ok, err := verifyUser(*user)
+	ok, err := verifyRequest(*user, &http.Request{})
 	assert.True(t, ok)
 	assert.Nil(t, err)
 }
@@ -87,7 +88,7 @@ func TestVerifyUserNegativeByTeam(t *testing.T) {
 	user := &structs.User{Username: "testuser", Email: "test@example.com", Name: "Test Name"}
 	// cfg.Cfg.TeamWhiteList = append(cfg.Cfg.TeamWhiteList, "org1/team1")
 
-	ok, err := verifyUser(*user)
+	ok, err := verifyRequest(*user, &http.Request{})
 	assert.False(t, ok)
 	assert.NotNil(t, err)
 }
@@ -97,7 +98,7 @@ func TestVerifyUserPositiveNoDomainsConfigured(t *testing.T) {
 
 	user := &structs.User{Username: "testuser", Email: "test@example.com", Name: "Test Name"}
 	cfg.Cfg.Domains = make([]string, 0)
-	ok, err := verifyUser(*user)
+	ok, err := verifyRequest(*user, &http.Request{})
 
 	assert.True(t, ok)
 	assert.Nil(t, err)
@@ -106,8 +107,64 @@ func TestVerifyUserPositiveNoDomainsConfigured(t *testing.T) {
 func TestVerifyUserNegative(t *testing.T) {
 	setUp("/config/testing/test_config.yml")
 	user := &structs.User{Username: "testuser", Email: "test@example.com", Name: "Test Name"}
-	ok, err := verifyUser(*user)
+	ok, err := verifyRequest(*user, &http.Request{})
 
+	assert.False(t, ok)
+	assert.NotNil(t, err)
+}
+
+func TestVerifyAdminPositiveInAllowRules(t *testing.T) {
+	setUp("/config/testing/handler_allowrules.yml")
+	user := &structs.User{Username: "admin@example.com", Email: "admin@example.com", Name: "Admin Name"}
+	ok, err := verifyRequest(*user, &http.Request{})
+	assert.True(t, ok)
+	assert.Nil(t, err)
+}
+
+func TestVerifyAnotherAdminPositiveInAllowRules(t *testing.T) {
+	setUp("/config/testing/handler_allowrules.yml")
+	user := &structs.User{Username: "admin@another.org", Email: "admin@another.org", Name: "Another admin name"}
+	ok, err := verifyRequest(*user, &http.Request{})
+	assert.True(t, ok)
+	assert.Nil(t, err)
+}
+
+func TestVerifyAnotherAdminNegativeInAllowRules(t *testing.T) {
+	setUp("/config/testing/handler_allowrules.yml")
+	user := &structs.User{Username: "admin@notfound.org", Email: "admin@notfound.org", Name: "Not found admin name"}
+	ok, err := verifyRequest(*user, &http.Request{})
+	assert.False(t, ok)
+	assert.NotNil(t, err)
+}
+
+func TestMediaUserPositiveInAllowRules(t *testing.T) {
+	setUp("/config/testing/handler_allowrules.yml")
+	user := &structs.User{Username: "foo@example.com", Email: "foo@example.com", Name: "Foo"}
+	ok, err := verifyRequest(*user, &http.Request{Host: "videos-01.example.com"})
+	assert.True(t, ok)
+	assert.Nil(t, err)
+}
+
+func TestAnotherMediaUserPositiveInAllowRules(t *testing.T) {
+	setUp("/config/testing/handler_allowrules.yml")
+	user := &structs.User{Username: "bar@example.com", Email: "bar@example.com", Name: "Bar"}
+	ok, err := verifyRequest(*user, &http.Request{Host: "photos-99.example.com"})
+	assert.True(t, ok)
+	assert.Nil(t, err)
+}
+
+func TestMediaUserUsernameNegativeInAllowRules(t *testing.T) {
+	setUp("/config/testing/handler_allowrules.yml")
+	user := &structs.User{Username: "bar@another.org", Email: "bar@another.org", Name: "Bar"}
+	ok, err := verifyRequest(*user, &http.Request{Host: "photos-99.example.com"})
+	assert.False(t, ok)
+	assert.NotNil(t, err)
+}
+
+func TestMediaUserHostNegativeInAllowRules(t *testing.T) {
+	setUp("/config/testing/handler_allowrules.yml")
+	user := &structs.User{Username: "foo@example.com", Email: "foo@example.com", Name: "Foo"}
+	ok, err := verifyRequest(*user, &http.Request{Host: "media.example.com"})
 	assert.False(t, ok)
 	assert.NotNil(t, err)
 }

@@ -71,7 +71,7 @@ func CallbackHandler(w http.ResponseWriter, r *http.Request) {
 	// log.Debugf("/auth %+v", user)
 
 	// verify / authz the user
-	if ok, err := verifyUser(user); !ok {
+	if ok, err := verifyRequest(user, r); !ok {
 		responses.Error403(w, r, fmt.Errorf("/auth User is not authorized: %w . Please try again or seek support from your administrator", err))
 		return
 	}
@@ -100,8 +100,8 @@ func CallbackHandler(w http.ResponseWriter, r *http.Request) {
 	responses.RenderIndex(w, "/auth "+tokenstring)
 }
 
-// verifyUser validates that the domains match for the user
-func verifyUser(u interface{}) (bool, error) {
+// verifyRequest validates that the domains match for the user
+func verifyRequest(u interface{}, r *http.Request) (bool, error) {
 
 	user := u.(structs.User)
 
@@ -109,42 +109,93 @@ func verifyUser(u interface{}) (bool, error) {
 
 	// AllowAllUsers
 	case cfg.Cfg.AllowAllUsers:
-		log.Debugf("verifyUser: Success! skipping verification, cfg.Cfg.AllowAllUsers is %t", cfg.Cfg.AllowAllUsers)
+		log.Debugf("verifyRequest: Success! skipping verification, cfg.Cfg.AllowAllUsers is %t", cfg.Cfg.AllowAllUsers)
 		return true, nil
+
+	// AllowRules
+	case len(cfg.Cfg.AllowRules) != 0:
+		for _, ruleset := range cfg.Cfg.AllowRules {
+			allow := true
+		ruleset:
+			for _, rule := range ruleset.Rules {
+			rule:
+				switch rule.Type {
+				case "username":
+					for _, username := range rule.Values {
+						if username == user.Username {
+							break rule
+						}
+					}
+					allow = false
+					break ruleset
+				case "host":
+					for _, host := range rule.Values {
+						if host == r.Host {
+							break rule
+						}
+					}
+					allow = false
+					break ruleset
+				case "username:rx":
+					for _, username := range rule.ValuesRx {
+						if username.Match([]byte(user.Username)) {
+							break rule
+						}
+					}
+					allow = false
+					break ruleset
+				case "host:rx":
+					for _, host := range rule.ValuesRx {
+						if host.Match([]byte(r.Host)) {
+							break rule
+						}
+					}
+					allow = false
+					break ruleset
+				}
+			}
+			// Only if all rules have matched
+			if allow {
+				log.Debugf("verifyRequest: Success! request matches rule in AllowRules for user.Username and rule: %s, %s", user.Username, ruleset.Name)
+				return true, nil
+			}
+		}
+
+		return false, fmt.Errorf("verifyRequest: no rule matches for user.Username in AllowRules: %s", user.Username)
 
 	// WhiteList
 	case len(cfg.Cfg.WhiteList) != 0:
 		for _, wl := range cfg.Cfg.WhiteList {
 			if user.Username == wl {
-				log.Debugf("verifyUser: Success! found user.Username in WhiteList: %s", user.Username)
+				log.Debugf("verifyRequest: Success! found user.Username in WhiteList: %s", user.Username)
 				return true, nil
 			}
 		}
-		return false, fmt.Errorf("verifyUser: user.Username not found in WhiteList: %s", user.Username)
+		return false, fmt.Errorf("verifyRequest: user.Username not found in WhiteList: %s", user.Username)
 
 	// TeamWhiteList
 	case len(cfg.Cfg.TeamWhiteList) != 0:
 		for _, team := range user.TeamMemberships {
 			for _, wl := range cfg.Cfg.TeamWhiteList {
 				if team == wl {
-					log.Debugf("verifyUser: Success! found user.TeamWhiteList in TeamWhiteList: %s for user %s", wl, user.Username)
+					log.Debugf("verifyRequest: Success! found user.TeamWhiteList in TeamWhiteList: %s for user %s", wl, user.Username)
 					return true, nil
 				}
 			}
 		}
-		return false, fmt.Errorf("verifyUser: user.TeamMemberships %s not found in TeamWhiteList: %s for user %s", user.TeamMemberships, cfg.Cfg.TeamWhiteList, user.Username)
+		return false, fmt.Errorf("verifyRequest: user.TeamMemberships %s not found in TeamWhiteList: %s for user %s", user.TeamMemberships, cfg.Cfg.TeamWhiteList, user.Username)
 
 	// Domains
 	case len(cfg.Cfg.Domains) != 0:
 		if domains.IsUnderManagement(user.Email) {
-			log.Debugf("verifyUser: Success! Email %s found within a "+cfg.Branding.FullName+" managed domain", user.Email)
+			log.Debugf("verifyRequest: Success! Email %s found within a "+cfg.Branding.FullName+" managed domain", user.Email)
 			return true, nil
 		}
-		return false, fmt.Errorf("verifyUser: Email %s is not within a "+cfg.Branding.FullName+" managed domain", user.Email)
+		return false, fmt.Errorf("verifyRequest: Email %s is not within a "+cfg.Branding.FullName+" managed domain", user.Email)
 
 	// nothing configured, allow everyone through
 	default:
-		log.Warn("verifyUser: no domains, whitelist, teamWhitelist or AllowAllUsers configured, any successful auth to the IdP authorizes access")
+		log.Warn("verifyRequest: no domains, whitelist, teamWhitelist or AllowAllUsers configured, any successful auth to the IdP authorizes access")
 		return true, nil
 	}
 }
